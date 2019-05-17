@@ -16,5 +16,9 @@ Installing Python: https://realpython.com/installing-python/
 
 This should create a file in your lich folder called explog.db. It is important that the expview.py file and this explog.db file are in the same directory.
 7. To view the data you need Flask for python, install that by running ```pip install flask``` in the terminal or check out http://flask.pocoo.org/docs/1.0/installation/
+
 8. Launch the app with ```python expview.py```
+
+
+
 
