@@ -22,4 +22,4 @@ Installing Python: https://realpython.com/installing-python/
 
 8. Launch the app with ```python expview.py```. This should run the server and open a web browser to http://localhost:5000
 
-
+For now the setup is a little rough. I might try to find a better solution than running it in python when I get time. If you want to try it out and have questions hit me up on discord ViaoV#5949
