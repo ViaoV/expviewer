@@ -1,0 +1,106 @@
+# import SQLITE for DB interaction
+require 'sqlite3'
+
+# Regular expressions for pulling xp values out of the stream
+exp_reg = /<component id='exp [^<>]+'>\s+(.*).*:\s+(\d+)\s+(\d+)%\s(\w+\s\w+|\w+)/
+new_exp_reg = /<component id='exp [^<>]+'><preset id='whisper'>\s+(.*).*:\s+(\d+)\s+(\d+)%\s(\w+\s\w+|\w+)/
+exp_brief_reg = %r{<component id='exp [^<>]+'><d cmd..skill (.*)\'.*:\s+(.*)\s(\d+)%\s*\[\s?(\d+)/34\]<}
+new_exp_brief_reg = %r{<component id='exp [^<>]+'><preset id='whisper'><d cmd..skill (.*)\'.*:\s+(.*)\s(\d+)%\s*\[\s?(\d+)/34\]<}
+two_col_exp_reg = %r{^\s+([^:\(\)]+):\s+(\d+)\s(\d+)%[^\(\)]*\((\d+)/\d+\)([^:\(\)]+):\s+(\d+)\s(\d+)%[^\(\)]*\((\d+)/\d+\)}
+single_col_exp_reg = %r{^\s+([^:\(\)]+):\s+(\d+)\s(\d+)%[^\(\)]*\((\d+)/\d+\)}
+
+# Mapping to convert states to numerical values 
+xp_pools = ['clear', 'dabbling', 'perusing', 'learning', 'thoughtful', 'thinking', 'considering', 'pondering', 'ruminating',
+            'concentrating', 'attentive', 'deliberative', 'interested', 'examining', 'understanding', 'absorbing', 'intrigued',
+            'scrutinizing', 'analyzing', 'studious', 'focused', 'very focused', 'engaged', 'very engaged', 'cogitating', 'fascinated',
+            'captivated', 'engrossed', 'riveted', 'very riveted', 'rapt', 'very rapt', 'enthralled', 'nearly locked', 'mind lock']
+
+
+# Check if the database exists
+database = if File.file?("explog.db")
+    SQLite3::Database.new("explog.db")
+else
+    # build a new database and create the table to hold xp information
+    echo "*** NEW EXP LOG DATABASE SETUP ***"
+    SQLite3::Database.new("explog.db").tap do |db|
+        db.execute("""
+            CREATE TABLE skills (
+                id INTEGER PRIMARY KEY, 
+                character TEXT,
+                skill TEXT, 
+                rank NUMERIC,  
+                perc NUMERIC, 
+                pool NUMERIC,
+                timestamp TEXT
+            );
+        """)
+    end
+end
+
+# Skills dictionary
+skills = {}
+
+# Hook function to parse incoming stream lines and pull out xp values, adding them to the skills dictionary
+exp_watch = proc do |server_string|
+  if server_string =~ new_exp_brief_reg || server_string =~ exp_brief_reg
+        skill = Regexp.last_match(1)
+        rank = Regexp.last_match(2) 
+        xp = xp_pools.index(Regexp.last_match(4))
+        perc = Regexp.last_match(3)
+        skills[skill] = { :rank => rank.to_i, :xp => xp.to_i, :perc => perc, :timestamp => DateTime.now.strftime("%FT%T")}
+    elsif server_string =~ exp_reg || server_string =~ new_exp_reg
+        skill = Regexp.last_match(1)
+        rank = Regexp.last_match(2)
+        xp = xp_pools.index(Regexp.last_match(4))
+        perc = Regexp.last_match(3)
+        skills[skill] = { :rank => rank.to_i, :xp => xp.to_i, :perc => perc, :timestamp => DateTime.now.strftime("%FT%T")}
+    elsif server_string =~ two_col_exp_reg
+        skill = Regexp.last_match(1).strip
+        rank = Regexp.last_match(2)
+        xp = Regexp.last_match(4)
+        perc = Regexp.last_match(3)
+        skill2 = Regexp.last_match(5).strip
+        rank2 = Regexp.last_match(6)
+        xp2 = Regexp.last_match(8)
+        perc2 = Regexp.last_match(7)
+        skills[skill] = { :rank => rank.to_i, :xp => xp.to_i, :perc => perc, :timestamp => DateTime.now.strftime("%FT%T")}
+        skills[skill2] = { :rank => rank2.to_i, :xp => xp2.to_i, :perc => perc2, :timestamp => DateTime.now.strftime("%FT%T")}
+    elsif server_string =~ single_col_exp_reg
+        skill = Regexp.last_match(1).strip
+        rank = Regexp.last_match(2)
+        xp = Regexp.last_match(4)
+        perc = Regexp.last_match(3)
+        skills[skill] = { :rank => rank.to_i, :xp => xp.to_i, :perc => perc, :timestamp => DateTime.now.strftime("%FT%T")}
+    end
+    server_string
+end
+# Create hook to read the game stream 
+DownstreamHook.add("explog", exp_watch)
+
+# When the script dies we want to do a final commit to the db and remove the game hook 
+before_dying do
+    sql = skills.keys.each do |skill_name| 
+        skill = skills[skill_name]
+        database.execute("INSERT INTO skills (character, skill, rank,perc, pool, timestamp) VALUES ('#{XMLData.name}','#{skill_name}', #{skill[:rank]}, #{skill[:perc]}, #{skill[:xp]}, '#{skill[:timestamp]}');")
+    end
+    DownstreamHook.remove("explog")
+end
+
+# infiinte loop
+while true
+    # We pause for 900 seconds to keep the record count low
+    # we are looking for data over time so we dont need the point in
+    # time data to be that super frequent
+    pause 900
+    # check to make sure there are skills to be written
+    next unless skills.keys.length > 0
+    # Build a series of sql commands and insert the data
+    sql = skills.keys.each do |skill_name| 
+        skill = skills[skill_name]
+        database.execute("INSERT INTO skills (character, skill, rank, perc, pool, timestamp) VALUES ('#{XMLData.name}','#{skill_name}', #{skill[:rank]}, #{skill[:perc]},#{skill[:xp]}, '#{skill[:timestamp]}');")
+    end
+    # clear skills dictionary
+    skills = {}
+end
+
+DownstreamHook.remove("explog")
